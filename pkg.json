@@ -1,0 +1,25 @@
+
+{
+    "name" : "litac-sqlite",
+    "version" : "0.0.1",
+    "type" : "executable",
+    "repo" : "",
+
+    "build_command" : {
+        // TARGET (debug|release|default)
+        "default" : {
+            // OS (linux|mac|windows|default)
+            "default" : {
+                // ARCH (x86|x64|arm32|arm64|default)
+                "default" : {
+                    "cc" : "clang",
+                    "cc_options" : "-fsanitize=undefined,address %input% src/sqlite/sqlite3.c -o %output% -D_CRT_SECURE_NO_WARNINGS",
+                    "lita_options" : ""
+                }
+            }
+        }
+    },
+
+    "dependencies": [],
+
+}
