@@ -6,6 +6,7 @@ import "std/mem"
 import "std/libc"
 
 import "db"
+import "sqlite"
 
 public struct Team {
     id: i64
@@ -38,15 +39,47 @@ public func (this: *Team) getSqlSelect() : String {
         FROM team t
         """
 }
-/*
-public func (this: *Team) bindName(
-    stmt: *SqlStatement,
-    id: i64,
-    fromIndex: i32
-) : i32 {
-    stmt.bindString(fromIndex += 1, id)
-    return fromIndex
-}*/
+
+public func (this: *Team) getSqlInsert() : String {
+    return
+        $"""
+        INSERT INTO team
+            (name, city, state)
+        VALUES
+            (:name, :city, :state);
+        """
+}
+
+public func (this: *Team) getSqlDeleteOneById() : String {
+    return
+        $"""
+        DELETE
+        FROM team
+        WHERE id = :id;
+        """
+}
+
+public func (this: *Team) getSqlDelete() : String {
+    return
+        $"""
+        DELETE
+        FROM team
+        """
+}
+
+
+public func (this: *Team) getSqlUpdateOneById() : String {
+    return
+        $"""
+        UPDATE team
+        SET
+            name = ?,
+            city = ?,
+            state = ?
+        WHERE
+            id = :id;
+        """
+}
 
 public func (this: *Team) fromResultSet(
     resultSet: *SqlResultSet,
@@ -79,6 +112,15 @@ public func (this: *Team) bindId(
     return fromIndex
 }
 
+public func (this: *Team) bindValues(
+    stmt: *SqlStatement
+) {
+    var index = 0
+    stmt.bindString(index += 1, this.name)
+    stmt.bindString(index += 1, this.city)
+    stmt.bindString(index += 1, this.state)
+}
+
 
 // ---------------------------------------------------------
 // ORM API
@@ -97,6 +139,7 @@ public func (this: *SqlConnection) queryMany<T>(
     defer stmt.close()
 
     var sb = StringBuilderInit(1024, this.allocator)
+    defer sb.free()
 
     var resultType = T{}
     var select = resultType.getSqlSelect()
@@ -104,7 +147,7 @@ public func (this: *SqlConnection) queryMany<T>(
         select.length, select.buffer,
         where.length, where.buffer
     )
-printf("Query: %s\n", sb.cStr())
+
     this.prepare(
         &stmt,
         sb.toString()
@@ -142,14 +185,12 @@ printf("Query: %s\n", sb.cStr())
             case typeof(:String): {
                 var str = va_arg<String>(list)
                 stmt.bindString(index, str)
-                printf("Binding: %.*s\n", str.length, str.buffer)
                 break
             }
             case typeof(:*const char):
             case typeof(""): {
                 var str = va_arg<*const char>(list)
                 stmt.bindText(index, str, strlen(str))
-                printf("Binding: %s\n", str)
                 break
             }
             default: {
@@ -161,14 +202,12 @@ printf("Query: %s\n", sb.cStr())
                 }
                 return this.error
             }
-            index += 1
         }
+        index += 1
     }
 
     var resultSet = SqlResultSet{}
     stmt.execute(&resultSet)
-
-    result.init(32 /* TODO */, this.allocator)
 
     while(resultSet.hasNext()) {
         result.add(T{})
@@ -213,3 +252,149 @@ public func (this: *SqlConnection) queryOneById<T, ID>(
 
     return this.error
 }
+
+
+
+/* ---------------------------------------------------
+   Inserts
+------------------------------------------------------ */
+
+public func (this: *SqlConnection) insertMany<T>(
+    items: *Array<T>
+) : i32 {
+
+    if (this.hasError()) return 0
+
+    // TODO: Cache these prepared statements per entity type
+    var stmt = SqlStatement{}
+    defer stmt.close()
+
+    var sb = StringBuilderInit(1024, this.allocator)
+
+    var resultType = T{}
+    var insert = resultType.getSqlInsert()
+    sb.append("%.*s",
+        insert.length, insert.buffer
+    )
+
+    this.prepare(
+        &stmt,
+        sb.toString()
+    )
+
+    var inserts = 0
+    for(var i = 0; i < items.size(); i +=1) {
+        var item = items.get(i)
+        item.bindValues(&stmt)
+
+        if (stmt.step() == SQLITE_DONE) {
+            inserts += 1
+        }
+        stmt.reset()
+    }
+
+    return inserts
+}
+
+
+/* ---------------------------------------------------
+   Delete
+------------------------------------------------------ */
+
+public func (this: *SqlConnection) deleteOne<T>(
+    entity: *T
+) : i32 {
+
+    if (this.hasError()) return 0
+
+    // TODO: Cache these prepared statements per entity type
+    var stmt = SqlStatement{}
+    defer stmt.close()
+
+    var sb = StringBuilderInit(1024, this.allocator)
+    var delete = entity.getSqlDeleteOneById()
+    sb.append("%.*s",
+        delete.length, delete.buffer
+    )
+
+    this.prepare(
+        &stmt,
+        sb.toString()
+    )
+
+    entity.bindId(&stmt, entity.id, 0)
+
+    var deletes = 0
+    if (stmt.step() == SQLITE_DONE) {
+        deletes += 1
+    }
+
+    return deletes
+}
+
+public func (this: *SqlConnection) deleteById<T, ID>(
+    id: ID
+) : i32 {
+
+    if (this.hasError()) return 0
+
+    // TODO: Cache these prepared statements per entity type
+    var stmt = SqlStatement{}
+    defer stmt.close()
+
+    var sb = StringBuilderInit(1024, this.allocator)
+
+    var resultType = T{}
+    var delete = resultType.getSqlDeleteOneById()
+    sb.append("%.*s",
+        delete.length, delete.buffer
+    )
+
+    this.prepare(
+        &stmt,
+        sb.toString()
+    )
+
+    resultType.bindId(&stmt, id, 0)
+
+    var deletes = 0
+    if (stmt.step() == SQLITE_DONE) {
+        deletes += 1
+    }
+
+    return deletes
+}
+
+/*
+public func (this: *SqlConnection) deleteMany<T>(
+    entities: *Array<T>
+) : i32 {
+
+    if (this.hasError()) return 0
+
+    // TODO: Cache these prepared statements per entity type
+    var stmt = SqlStatement{}
+    defer stmt.close()
+
+    var sb = StringBuilderInit(1024, this.allocator)
+
+    var resultType = T{}
+    var delete = resultType.getSqlDeleteOneById()
+    sb.append("%.*s",
+        delete.length, delete.buffer
+    )
+
+    this.prepare(
+        &stmt,
+        sb.toString()
+    )
+
+    resultType.bindId(&stmt, id, 0)
+
+    var deletes = 0
+    if (stmt.step() == SQLITE_DONE) {
+        deletes += 1
+    }
+
+    return deletes
+}*/
